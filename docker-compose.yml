@@ -1,0 +1,92 @@
+services:
+  # Base de Datos Relacional Persistente
+  postgres:
+    image: postgres:16-alpine
+    container_name: fixlat-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: fixlat_db
+      POSTGRES_USER: fixlat_user
+      POSTGRES_PASSWORD: fixlat_secret
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U fixlat_user -d fixlat_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - fixlat-net
+
+  # Función AWS Lambda (Servicio emulador de cálculo serverless en local)
+  lambda-metrics:
+    build:
+      context: ./lambda-metrics
+      dockerfile: Dockerfile
+    container_name: fixlat-lambda-metrics
+    restart: unless-stopped
+    environment:
+      PORT: 8082
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: fixlat_db
+      DB_USER: fixlat_user
+      DB_PASSWORD: fixlat_secret
+    ports:
+      - "8082:8082"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - fixlat-net
+
+  # API Backend en Java 21 + Spring Boot 3
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: fixlat-backend
+    restart: unless-stopped
+    environment:
+      PORT: 8080
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: fixlat_db
+      DB_USER: fixlat_user
+      DB_PASSWORD: fixlat_secret
+      LAMBDA_METRICS_URL: http://lambda-metrics:8082/metrics
+      JWT_SECRET: 404E635266556A586E3272357538782F413F4428472B4B6250645367566B5970
+      CORS_ALLOWED_ORIGINS: http://localhost:3000,http://localhost:80,http://127.0.0.1:3000,http://127.0.0.1:80
+    ports:
+      - "8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      lambda-metrics:
+        condition: service_started
+    networks:
+      - fixlat-net
+
+  # Frontend Web SPA (React + Tailwind + Nginx)
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: fixlat-frontend
+    restart: unless-stopped
+    ports:
+      - "3000:80"
+    depends_on:
+      - backend
+    networks:
+      - fixlat-net
+
+volumes:
+  postgres_data:
+    driver: local
+
+networks:
+  fixlat-net:
+    driver: bridge
